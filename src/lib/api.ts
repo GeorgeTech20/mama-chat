@@ -1,6 +1,8 @@
 // API service for connecting to the Java backend
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
+console.log('[API] Base URL:', API_BASE_URL);
+
 export interface MessageDto {
   id: number;
   content: string;
@@ -40,6 +42,31 @@ export interface ChatResponse {
   response: string;
   conversationId: string;
   tokensUsed: number;
+}
+
+// Document types matching backend enum
+export type DocumentType = 'MEDICAL_EXAM' | 'PRESCRIPTION' | 'LAB_RESULT' | 'IMAGING_RESULT' | 'OTHER';
+
+export interface DocumentUploadResponse {
+  id: number;
+  fileName: string;
+  documentType: DocumentType;
+  fileSize: number;
+  uploadedAt: string;
+  processed: boolean;
+  message: string;
+}
+
+export interface MedicalDocument {
+  id: number;
+  patientId: number;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  documentType: DocumentType;
+  description?: string;
+  uploadedAt: string;
+  processed: boolean;
 }
 
 class ApiService {
@@ -237,6 +264,73 @@ class ApiService {
       throw new Error('Health check failed');
     }
     return response.text();
+  }
+
+  /**
+   * Upload a medical document
+   */
+  async uploadDocument(
+    file: File,
+    patientId: number,
+    documentType: DocumentType = 'OTHER',
+    description?: string
+  ): Promise<DocumentUploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patientId', patientId.toString());
+    formData.append('documentType', documentType);
+    if (description) {
+      formData.append('description', description);
+    }
+
+    const uploadUrl = `${this.baseUrl}/api/documents/upload`;
+    console.log('[API] Uploading document to:', uploadUrl);
+
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Failed to upload document: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get all documents for a patient
+   */
+  async getPatientDocuments(patientId: number): Promise<MedicalDocument[]> {
+    const response = await fetch(`${this.baseUrl}/api/documents/patient/${patientId}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch documents: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Get a specific document
+   */
+  async getDocument(documentId: number): Promise<MedicalDocument> {
+    const response = await fetch(`${this.baseUrl}/api/documents/${documentId}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch document: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Delete a document
+   */
+  async deleteDocument(documentId: number): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete document: ${response.statusText}`);
+    }
   }
 }
 

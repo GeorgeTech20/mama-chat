@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Upload, FileText, Image, Trash2, Eye, Plus } from 'lucide-react';
+import { ArrowLeft, FileText, Image, Trash2, Eye, Plus, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import MobileLayout from '@/components/MobileLayout';
 import BottomNav from '@/components/BottomNav';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { api, MedicalDocument, DocumentType } from '@/lib/api';
 import {
   Dialog,
   DialogContent,
@@ -15,24 +13,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-interface MedicalFile {
-  id: string;
-  file_name: string;
-  file_path: string;
-  file_type: string;
-  file_size: number;
-  description: string | null;
-  created_at: string;
-}
+// Default patient ID - TODO: Get from user context once mapping is implemented
+const PATIENT_ID = 1;
 
 const MedicalLibrary = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<MedicalFile[]>([]);
+  const [files, setFiles] = useState<MedicalDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<MedicalFile | null>(null);
+  const [selectedFile, setSelectedFile] = useState<MedicalDocument | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,13 +32,8 @@ const MedicalLibrary = () => {
 
   const fetchFiles = async () => {
     try {
-      const { data, error } = await supabase
-        .from('medical_files')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setFiles(data || []);
+      const documents = await api.getPatientDocuments(PATIENT_ID);
+      setFiles(documents);
     } catch (error) {
       console.error('Error fetching files:', error);
       toast({
@@ -58,6 +44,11 @@ const MedicalLibrary = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const getDocumentType = (fileType: string): DocumentType => {
+    if (fileType.includes('pdf')) return 'OTHER';
+    return 'MEDICAL_EXAM';
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,30 +79,14 @@ const MedicalLibrary = () => {
     setIsUploading(true);
 
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `uploads/${fileName}`;
-
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('medical-files')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // Get current user
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-
-      // Save file metadata
-      const { error: dbError } = await supabase.from('medical_files').insert({
-        file_name: file.name,
-        file_path: filePath,
-        file_type: file.type,
-        file_size: file.size,
-        user_id: currentUser?.id,
-      });
-
-      if (dbError) throw dbError;
+      const documentType = getDocumentType(file.type);
+      
+      await api.uploadDocument(
+        file,
+        PATIENT_ID,
+        documentType,
+        `Archivo subido: ${file.name}`
+      );
 
       toast({
         title: 'Archivo subido',
@@ -123,7 +98,7 @@ const MedicalLibrary = () => {
       console.error('Error uploading file:', error);
       toast({
         title: 'Error',
-        description: 'No se pudo subir el archivo',
+        description: error instanceof Error ? error.message : 'No se pudo subir el archivo',
         variant: 'destructive',
       });
     } finally {
@@ -134,22 +109,9 @@ const MedicalLibrary = () => {
     }
   };
 
-  const handleDelete = async (file: MedicalFile) => {
+  const handleDelete = async (file: MedicalDocument) => {
     try {
-      // Delete from storage
-      const { error: storageError } = await supabase.storage
-        .from('medical-files')
-        .remove([file.file_path]);
-
-      if (storageError) throw storageError;
-
-      // Delete from database
-      const { error: dbError } = await supabase
-        .from('medical_files')
-        .delete()
-        .eq('id', file.id);
-
-      if (dbError) throw dbError;
+      await api.deleteDocument(file.id);
 
       toast({
         title: 'Archivo eliminado',
@@ -167,17 +129,17 @@ const MedicalLibrary = () => {
     }
   };
 
-  const handlePreview = async (file: MedicalFile) => {
-    try {
-      const { data } = supabase.storage
-        .from('medical-files')
-        .getPublicUrl(file.file_path);
+  const handlePreview = async (file: MedicalDocument) => {
+    setSelectedFile(file);
+    // For preview, we'll use the download endpoint
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    setPreviewUrl(`${API_BASE_URL}/api/documents/${file.id}/download`);
+  };
 
-      setPreviewUrl(data.publicUrl);
-      setSelectedFile(file);
-    } catch (error) {
-      console.error('Error getting preview:', error);
-    }
+  const handleDownload = (file: MedicalDocument) => {
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const downloadUrl = `${API_BASE_URL}/api/documents/${file.id}/download`;
+    window.open(downloadUrl, '_blank');
   };
 
   const formatFileSize = (bytes: number) => {
@@ -192,6 +154,17 @@ const MedicalLibrary = () => {
       month: 'short',
       year: 'numeric',
     });
+  };
+
+  const getDocumentTypeLabel = (type: DocumentType) => {
+    const labels: Record<DocumentType, string> = {
+      'MEDICAL_EXAM': 'Examen Médico',
+      'PRESCRIPTION': 'Receta',
+      'LAB_RESULT': 'Resultado de Lab',
+      'IMAGING_RESULT': 'Imagen Médica',
+      'OTHER': 'Otro',
+    };
+    return labels[type] || type;
   };
 
   return (
@@ -274,7 +247,7 @@ const MedicalLibrary = () => {
                   <CardContent className="p-0">
                     <div className="flex items-center gap-3 p-3">
                       <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                        {file.file_type.includes('pdf') ? (
+                        {file.contentType?.includes('pdf') ? (
                           <FileText className="w-6 h-6 text-primary" />
                         ) : (
                           <Image className="w-6 h-6 text-primary" />
@@ -282,22 +255,34 @@ const MedicalLibrary = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-foreground truncate">
-                          {file.file_name}
+                          {file.fileName}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {formatFileSize(file.file_size)} • {formatDate(file.created_at)}
+                          {formatFileSize(file.fileSize)} • {formatDate(file.uploadedAt)}
+                        </p>
+                        <p className="text-xs text-primary">
+                          {getDocumentTypeLabel(file.documentType)}
                         </p>
                       </div>
                       <div className="flex gap-1">
                         <button
+                          onClick={() => handleDownload(file)}
+                          className="p-2 hover:bg-accent rounded-full transition-colors"
+                          title="Descargar"
+                        >
+                          <Download className="w-5 h-5 text-muted-foreground" />
+                        </button>
+                        <button
                           onClick={() => handlePreview(file)}
                           className="p-2 hover:bg-accent rounded-full transition-colors"
+                          title="Ver"
                         >
                           <Eye className="w-5 h-5 text-muted-foreground" />
                         </button>
                         <button
                           onClick={() => handleDelete(file)}
                           className="p-2 hover:bg-destructive/10 rounded-full transition-colors"
+                          title="Eliminar"
                         >
                           <Trash2 className="w-5 h-5 text-destructive" />
                         </button>
@@ -315,11 +300,11 @@ const MedicalLibrary = () => {
       <Dialog open={!!selectedFile} onOpenChange={() => setSelectedFile(null)}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-auto">
           <DialogHeader>
-            <DialogTitle className="truncate">{selectedFile?.file_name}</DialogTitle>
+            <DialogTitle className="truncate">{selectedFile?.fileName}</DialogTitle>
           </DialogHeader>
           {previewUrl && selectedFile && (
             <div className="mt-4">
-              {selectedFile.file_type.includes('pdf') ? (
+              {selectedFile.contentType?.includes('pdf') ? (
                 <div className="text-center py-8">
                   <FileText className="w-16 h-16 text-primary mx-auto mb-4" />
                   <a
@@ -334,7 +319,7 @@ const MedicalLibrary = () => {
               ) : (
                 <img
                   src={previewUrl}
-                  alt={selectedFile.file_name}
+                  alt={selectedFile.fileName}
                   className="w-full rounded-lg"
                 />
               )}

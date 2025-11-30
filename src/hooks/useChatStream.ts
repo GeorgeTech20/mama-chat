@@ -5,6 +5,9 @@ import { toast } from 'sonner';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 const CHAT_URL = `${API_BASE_URL}/api/chat/stream`;
 
+console.log('[Chat] API Base URL:', API_BASE_URL);
+console.log('[Chat] Chat URL:', CHAT_URL);
+
 interface UseChatStreamOptions {
   patientId: string | number | null;
   conversationId: string | null;

@@ -5,7 +5,7 @@ import BottomNav from '@/components/BottomNav';
 import { Input } from '@/components/ui/input';
 import { Message } from '@/types/health';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActivePatient } from '@/hooks/useActivePatient';
@@ -78,8 +78,9 @@ const formatMessageContent = (content: string) => {
 };
 
 const Chat = () => {
-  const { user, profile } = useAuth();
-  const { activePatient } = useActivePatient();
+  // TODO: Use these for proper patient ID mapping once implemented
+  // const { profile } = useAuth();
+  // const { activePatient } = useActivePatient();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -192,36 +193,26 @@ const Chat = () => {
   const uploadFile = async (file: File, description?: string): Promise<boolean> => {
     setIsUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user?.id}/${Date.now()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('medical-files')
-        .upload(fileName, file);
-
-      if (uploadError) throw uploadError;
-
+      // Determine document type based on file type
+      const documentType = file.type.includes('pdf') ? 'OTHER' : 'MEDICAL_EXAM';
+      
       const fileDescription = description?.trim()
         ? description.trim()
         : `Archivo subido: ${file.name}`;
 
-      const { error: dbError } = await supabase.from('medical_files').insert({
-        file_name: file.name,
-        file_path: fileName,
-        file_type: file.type,
-        file_size: file.size,
-        description: fileDescription,
-        user_id: user?.id || null,
-        patient_id: activePatient?.id || profile?.patient_active || null,
-      });
-
-      if (dbError) throw dbError;
+      // Upload to backend API
+      await api.uploadDocument(
+        file,
+        numericPatientId,
+        documentType,
+        fileDescription
+      );
 
       toast.success('Archivo guardado en tu historia clínica');
       return true;
     } catch (error) {
       console.error('Error uploading file:', error);
-      toast.error('Error al subir el archivo');
+      toast.error(error instanceof Error ? error.message : 'Error al subir el archivo');
       return false;
     } finally {
       setIsUploading(false);
@@ -289,12 +280,6 @@ const Chat = () => {
           {/* Header */}
           <header className="flex items-center justify-between px-6 py-4">
             <h1 className="text-2xl font-bold text-foreground">Chat</h1>
-            <button
-              onClick={startNewConversation}
-              className="w-8 h-8 rounded-full border border-primary flex items-center justify-center text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
           </header>
 
           {/* Welcome Content */}
@@ -336,16 +321,6 @@ const Chat = () => {
             <p className="text-xs text-success">En línea</p>
           </div>
         </div>
-        <button
-          onClick={() => {
-            setHasConversation(false);
-            setMessages([]);
-            setConversationId(null);
-          }}
-          className="w-8 h-8 rounded-full border border-primary flex items-center justify-center text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
       </header>
 
       {/* Messages or Intro */}
