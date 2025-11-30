@@ -257,18 +257,13 @@ const Chat = () => {
 
           {/* Welcome Content */}
           <div className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
-            <div className="flex items-end gap-3 mb-8">
-              <img 
-                src={michiMedic} 
-                alt="Michi Medic" 
-                className="w-24 h-24 object-contain"
-              />
-              <div className="bg-card border border-border rounded-2xl rounded-bl-md px-4 py-3 max-w-[200px]">
-                <p className="text-sm text-foreground">
-                  ¡Hola! Soy Michi Medic.{'\n\n'}Cuéntame, ¿qué síntomas estás experimentando hoy?
-                </p>
-              </div>
-            </div>
+            <img 
+              src={michiMedic} 
+              alt="Michi Medic" 
+              className="w-32 h-32 object-contain mb-4"
+            />
+            <h2 className="text-lg font-semibold text-foreground mb-1">Michi Medic</h2>
+            <p className="text-muted-foreground text-sm mb-6">Con amor y paz 💙</p>
             <button
               onClick={startNewConversation}
               className="flex items-center gap-2 px-6 py-3 border border-primary text-primary rounded-full font-medium hover:bg-primary hover:text-primary-foreground transition-colors"
