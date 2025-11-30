@@ -9,6 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActivePatient } from '@/hooks/useActivePatient';
+import { useChatStream } from '@/hooks/useChatStream';
 import michiMedic from '@/assets/michi-medic.png';
 import michiWelcome from '@/assets/michi-welcome.png';
 
@@ -19,53 +20,25 @@ const quickSuggestions = [
   'Tos o gripe',
 ];
 
-const symptomQuestions = [
-  {
-    keywords: ['dolor', 'cabeza', 'cefalea'],
-    followUp: '¿Hace cuánto tiempo tienes este dolor de cabeza? ¿Es constante o intermitente?',
-    recommendation: 'Para el dolor de cabeza te recomiendo:\n\n• Descansar en un lugar oscuro y silencioso\n• Tomar abundante agua\n• Aplicar compresas frías en la frente\n• Si persiste más de 24 horas, consulta con un médico\n\n¿Tienes algún otro síntoma?',
-  },
-  {
-    keywords: ['fiebre', 'temperatura', 'caliente'],
-    followUp: '¿Has medido tu temperatura? ¿Tienes otros síntomas como escalofríos o sudoración?',
-    recommendation: 'Para la fiebre te recomiendo:\n\n• Mantente hidratado con agua y líquidos\n• Usa ropa ligera\n• Descansa lo suficiente\n• Si la fiebre supera 38.5°C o dura más de 3 días, consulta a un médico\n\n¿Hay algo más que te preocupe?',
-  },
-  {
-    keywords: ['estómago', 'náuseas', 'vómito', 'diarrea', 'digestión'],
-    followUp: '¿Desde cuándo tienes estas molestias estomacales? ¿Has comido algo diferente recientemente?',
-    recommendation: 'Para las molestias estomacales te recomiendo:\n\n• Dieta blanda (arroz, pollo, plátano)\n• Evita alimentos grasos y picantes\n• Toma líquidos en pequeños sorbos\n• Si hay sangre o los síntomas persisten, busca atención médica\n\n¿Cómo te sientes ahora?',
-  },
-  {
-    keywords: ['cansancio', 'fatiga', 'sueño', 'agotado'],
-    followUp: '¿Cuántas horas estás durmiendo? ¿Este cansancio es reciente o llevas tiempo sintiéndote así?',
-    recommendation: 'Para combatir el cansancio te recomiendo:\n\n• Dormir 7-8 horas diarias\n• Hacer ejercicio ligero regularmente\n• Alimentación balanceada\n• Reducir el estrés con técnicas de relajación\n\n¿Te gustaría agendar una cita con un especialista?',
-  },
-  {
-    keywords: ['tos', 'gripe', 'resfriado', 'congestión', 'nariz'],
-    followUp: '¿La tos es seca o con flema? ¿Tienes otros síntomas como congestión nasal?',
-    recommendation: 'Para los síntomas de gripe te recomiendo:\n\n• Descanso absoluto\n• Líquidos calientes (té, sopas)\n• Miel con limón para la garganta\n• Vapor de agua para la congestión\n• Si hay dificultad para respirar, consulta inmediatamente\n\n¿Necesitas más ayuda?',
-  },
-];
-
-const defaultResponses = [
-  'Entiendo. ¿Podrías darme más detalles sobre cómo te sientes? Por ejemplo, ¿dónde sientes las molestias?',
-  'Gracias por compartir eso conmigo. ¿Hace cuánto tiempo comenzaste a sentirte así?',
-  'Es importante que me cuentes más. ¿El malestar es constante o aparece en ciertos momentos?',
-  '¿Hay algo que haga que te sientas mejor o peor? Cuéntame más para poder ayudarte mejor.',
-];
-
 const Chat = () => {
   const { user, profile } = useAuth();
   const { activePatient } = useActivePatient();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [conversationContext, setConversationContext] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [hasConversation, setHasConversation] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { sendMessage: sendStreamMessage, isLoading } = useChatStream({
+    patientId: activePatient?.id || profile?.patient_active || null,
+    conversationId,
+    onConversationIdChange: setConversationId,
+  });
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -75,38 +48,66 @@ const Chat = () => {
     scrollToBottom();
   }, [messages]);
 
-  const [showIntro, setShowIntro] = useState(true);
-
   const startNewConversation = () => {
     setMessages([]);
     setHasConversation(true);
     setShowIntro(true);
-    setConversationContext([]);
+    setConversationId(null);
+  };
+
+  const handleSendMessage = async (messageText: string) => {
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: messageText,
+      sender: 'user',
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setIsTyping(true);
+
+    let assistantContent = '';
+    const assistantId = (Date.now() + 1).toString();
+
+    // Create initial assistant message
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantId,
+        content: '',
+        sender: 'mama',
+        timestamp: new Date(),
+      },
+    ]);
+
+    await sendStreamMessage(
+      messageText,
+      (delta) => {
+        assistantContent += delta;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId ? { ...msg, content: assistantContent } : msg
+          )
+        );
+      },
+      () => {
+        setIsTyping(false);
+        if (!assistantContent) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, content: 'Lo siento, no pude procesar tu mensaje. Intenta de nuevo.' }
+                : msg
+            )
+          );
+        }
+      }
+    );
   };
 
   const handleSuggestionClick = (suggestion: string) => {
     setShowIntro(false);
-    
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: suggestion,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-    setMessages([userMessage]);
-    setIsTyping(true);
-
-    setTimeout(() => {
-      const response = generateResponse(suggestion);
-      const michiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response,
-        sender: 'mama',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, michiMessage]);
-      setIsTyping(false);
-    }, 1500);
+    handleSendMessage(suggestion);
   };
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,35 +167,6 @@ const Chat = () => {
     }
   };
 
-  const generateResponse = (userMessage: string): string => {
-    const lowerMessage = userMessage.toLowerCase();
-
-    for (const symptom of symptomQuestions) {
-      if (symptom.keywords.some(keyword => lowerMessage.includes(keyword))) {
-        if (conversationContext.includes(symptom.keywords[0])) {
-          return symptom.recommendation;
-        } else {
-          setConversationContext(prev => [...prev, symptom.keywords[0]]);
-          return symptom.followUp;
-        }
-      }
-    }
-
-    if (lowerMessage.includes('gracias') || lowerMessage.includes('thank')) {
-      return '¡De nada! Recuerda que estoy aquí para ayudarte. Si tienes más preguntas sobre tu salud, no dudes en consultarme.\n\n¿Hay algo más en lo que pueda ayudarte?';
-    }
-
-    if (lowerMessage.includes('cita') || lowerMessage.includes('doctor') || lowerMessage.includes('médico')) {
-      return '¡Claro! Puedo ayudarte a encontrar un especialista. Te recomiendo consultar con tu médico de confianza según los síntomas que describes.\n\n¿Te gustaría que te dé más información?';
-    }
-
-    if (lowerMessage.includes('hola') || lowerMessage.includes('buenos') || lowerMessage.includes('buenas')) {
-      return '¡Hola! ¿Cómo te encuentras hoy? Cuéntame si tienes algún síntoma o malestar que te preocupe. Estoy aquí para ayudarte.';
-    }
-
-    return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
-  };
-
   const handleSend = async () => {
     if (!inputValue.trim() && !attachedFile) return;
     
@@ -243,29 +215,9 @@ const Chat = () => {
       return;
     }
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: inputValue,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
     const currentInput = inputValue;
     setInputValue('');
-    setIsTyping(true);
-
-    setTimeout(() => {
-      const response = generateResponse(currentInput);
-      const michiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response,
-        sender: 'mama',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, michiMessage]);
-      setIsTyping(false);
-    }, 1500);
+    await handleSendMessage(currentInput);
   };
 
   // Welcome screen when no conversation
@@ -327,6 +279,7 @@ const Chat = () => {
           onClick={() => {
             setHasConversation(false);
             setMessages([]);
+            setConversationId(null);
           }}
           className="w-8 h-8 rounded-full border border-primary flex items-center justify-center text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
         >
@@ -467,7 +420,7 @@ const Chat = () => {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
+            disabled={isUploading || isLoading}
             className="p-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors"
           >
             <Paperclip className="w-5 h-5" />
@@ -475,16 +428,17 @@ const Chat = () => {
           <Input
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
             placeholder="Escribe tu mensaje..."
+            disabled={isLoading}
             className="flex-1 bg-card border-border rounded-xl py-6"
           />
           <button
             onClick={handleSend}
-            disabled={(!inputValue.trim() && !attachedFile) || isUploading}
+            disabled={(!inputValue.trim() && !attachedFile) || isUploading || isLoading}
             className="p-3 bg-primary text-primary-foreground rounded-xl disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
           >
-            {isUploading ? (
+            {isUploading || isLoading ? (
               <div className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
             ) : (
               <Send className="w-5 h-5" />
